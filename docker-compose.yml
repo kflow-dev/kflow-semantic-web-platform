@@ -1,0 +1,56 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: directus
+      POSTGRES_PASSWORD: directus
+      POSTGRES_DB: directus
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+
+  directus:
+    image: directus/directus:latest
+    ports:
+      - "8055:8055"
+    environment:
+      KEY: supersecret
+      SECRET: supersecret
+      DB_CLIENT: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: directus
+      DB_USER: directus
+      DB_PASSWORD: directus
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: admin123
+    depends_on:
+      - postgres
+
+  qdrant:
+    image: qdrant/qdrant:v1.8.2
+    ports:
+      - "6333:6333"
+
+  jena:
+    image: stain/jena-fuseki
+    ports:
+      - "3030:3030"
+    environment:
+      ADMIN_PASSWORD: admin
+
+  llamaindex:
+    build: ./services/llamaindex
+    ports:
+      - "5000:5000"
+    depends_on:
+      - qdrant
+
+  qr:
+    build: ./services/qr
+    ports:
+      - "7000:7000"
