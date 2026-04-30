@@ -1,0 +1,22 @@
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix : <http://example.org/> .
+
+:product a rdf:Class ;
+    rdfs:label "Product" ;
+    rdfs:comment "A product in the webshop" .
+
+:productName a rdf:Property ;
+    rdfs:domain :product ;
+    rdfs:range rdfs:Literal ;
+    rdfs:label "Product Name" .
+
+:productPrice a rdf:Property ;
+    rdfs:domain :product ;
+    rdfs:range rdfs:Literal ;
+    rdfs:label "Product Price" .
+
+:productStock a rdf:Property ;
+    rdfs:domain :product ;
+    rdfs:range rdfs:Literal ;
+    rdfs:label "Product Stock" .

@@ -1,0 +1,26 @@
+{
+  "keycloak": {
+    "version": "latest",
+    "admin": {
+      "username": "admin",
+      "password": "admin"
+    },
+    "realm": "master",
+    "clients": {
+      "directus": {
+        "name": "directus",
+        "secret": "directus-secret",
+        "redirectUris": ["http://localhost:8055/*"],
+        "webOrigins": ["http://localhost:8055"]
+      }
+    },
+    "database": {
+      "vendor": "postgres",
+      "host": "postgres",
+      "port": 5432,
+      "database": "keycloak",
+      "username": "keycloak",
+      "password": "keycloak"
+    }
+  }
+}
