@@ -34,7 +34,7 @@ Full stack platform for hosting interactive data products and services for knowl
         8. Nginx → reverse proxy
 
 ## Technical architecture:
-
+'''
                  🌐 Nginx (TLS)
                         |
                  API Gateway (Kong)
@@ -48,6 +48,7 @@ Full stack platform for hosting interactive data products and services for knowl
  Redis Streams (events)
      |
  Real-time Dashboard (WebSocket)
+'''
 
 ## Service URL List:
 - Directus	http://localhost:8055
