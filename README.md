@@ -51,13 +51,13 @@ Full stack platform for hosting interactive data products and services for knowl
 '''
 
 ## Service URL List:
-- Directus	http://localhost:8055
-- Keycloak	http://localhost:8080
-- Listmonk	http://localhost:9001
-- Jena  	http://localhost:3030
-- Qdrant	http://localhost:6333
-- RAG API	http://localhost:5000
-- QR API	http://localhost:7000
+- Directus      http://localhost:8055
+- Keycloak      http://localhost:8080
+- Listmonk      http://localhost:9001
+- Jena          http://localhost:3030
+- Qdrant        http://localhost:6333
+- RAG API       http://localhost:5000
+- QR API        http://localhost:7000
 
 ## Getting Started
 
@@ -70,7 +70,7 @@ Full stack platform for hosting interactive data products and services for knowl
 1. Clone the repository
 2. Copy the example environment file:
    ```bash
-   cp .env.example .env
+   cp .env.template .env
    ```
 
 3. Start all services:

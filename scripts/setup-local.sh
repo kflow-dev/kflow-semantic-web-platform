@@ -17,7 +17,7 @@ fi
 # Copy environment file if it doesn't exist
 if [ ! -f ".env" ]; then
     echo "Creating .env file from example..."
-    cp .env.example .env
+    cp .env.template .env
 fi
 
 # Start all services
