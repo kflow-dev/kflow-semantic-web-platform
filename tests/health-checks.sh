@@ -1,33 +1,26 @@
 #!/bin/bash
+set -euo pipefail
 
-echo "Running health checks for kflow-semantic-web-platform..."
+BASE_URL="${BASE_URL:-https://localhost}"
+CURL_OPTS=(-fskL --connect-timeout 5 --max-time 30)
 
-# Check if all containers are running
-echo "1. Checking running containers..."
-docker-compose ps
+check() {
+  name="$1"
+  path="$2"
+  echo "Checking $name at $BASE_URL$path"
+  curl "${CURL_OPTS[@]}" "$BASE_URL$path" >/dev/null
+}
 
-# Check Directus service
-echo -e "\n2. Testing Directus service..."
-curl -f http://localhost:8055 || echo "Directus service is not responding"
+echo "Running health checks through Nginx front end."
+check "Nginx" "/health"
+check "Directus" "/server/health"
+check "Keycloak" "/auth/"
+check "FastAPI" "/api/health"
+check "RAG API" "/rag/health"
+check "QR API" "/qr/health"
+check "Jena Fuseki" "/jena/"
+check "Qdrant" "/qdrant/"
+check "Prometheus" "/prometheus/-/healthy"
+check "Grafana" "/grafana/api/health"
 
-# Check Keycloak service
-echo -e "\n3. Testing Keycloak service..."
-curl -f http://localhost:8080 || echo "Keycloak service is not responding"
-
-# Check Jena service
-echo -e "\n4. Testing Jena service..."
-curl -f http://localhost:3030 || echo "Jena service is not responding"
-
-# Check Qdrant service
-echo -e "\n5. Testing Qdrant service..."
-curl -f http://localhost:6333 || echo "Qdrant service is not responding"
-
-# Check QR API service
-echo -e "\n6. Testing QR API service..."
-curl -f http://localhost:7000 || echo "QR API service is not responding"
-
-# Check RAG API service
-echo -e "\n7. Testing RAG API service..."
-curl -f http://localhost:5000 || echo "RAG API service is not responding"
-
-echo -e "\nHealth checks completed!"
+echo "Health checks completed successfully."

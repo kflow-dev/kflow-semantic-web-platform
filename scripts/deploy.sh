@@ -1,71 +1,78 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# 🛠 Ubuntu 22.04 VPS One-Shot Deploy Script
-# Run: sudo bash deploy.sh
-
-PROJECT_DIR="/opt/ai-stack"
-VPS_USER="deploy"
-HTTPS=false
-DOMAIN=""
-
-echo "🚀 Starting AI Stack deployment..."
-
-# 1. Install Docker
-if ! command -v docker &> /dev/null; then
-  echo "📦 Installing Docker..."
-  curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-  sudo sh /tmp/get-docker.sh
-  sudo usermod -aG docker $USER
+TARGET="${1:-local}"
+if [ -z "${ENV_FILE:-}" ]; then
+  if [ "$TARGET" = "production" ]; then
+    ENV_FILE=".env"
+  else
+    ENV_FILE=".env.dev"
+  fi
 fi
 
-# 2. Install Docker Compose v2
-if ! docker compose version &> /dev/null; then
-  echo "📦 Installing Docker Compose..."
-  sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-  sudo chmod +x /usr/local/bin/docker-compose
-  sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
-fi
+compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose --env-file "$ENV_FILE" "$@"
+  else
+    docker-compose --env-file "$ENV_FILE" "$@"
+  fi
+}
 
-# 3. Create project dir
-sudo mkdir -p $PROJECT_DIR
-sudo chown -R $USER:$USER $PROJECT_DIR
-cd $PROJECT_DIR
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Error: $1 is required"
+    exit 1
+  fi
+}
 
-# 4. Copy .env (if exists) or use defaults
-if [ -f .env ]; then
-  echo "✅ Using existing .env"
-else
-  echo "🔧 Generating .env (override secrets manually!)"
-  cat > .env << EOF
-DIRECTUS_KEY=$(openssl rand -base64 24)
-DIRECTUS_SECRET=$(openssl rand -base64 24)
-POSTGRES_PASSWORD=$(openssl rand -base64 16)
-DIRECTUS_PORT=8055
-WIKIJS_PORT=3000
-FASTAPI_PORT=8000
-NEXTJS_PORT=3001
-NGINX_HTTP_PORT=80
-COMPOSE_PROJECT_NAME=ai-stack
-EOF
-fi
+load_env() {
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: $ENV_FILE does not exist. Copy .env.template and set production values."
+    exit 1
+  fi
+}
 
-# 5. Deploy
-echo "🚀 Deploying ai-stack..."
-docker compose down --remove-orphans
-docker compose up -d --build
+ensure_local_certs() {
+  mkdir -p .local/certs
+  if [ ! -f .local/certs/localhost.crt ] || [ ! -f .local/certs/localhost.key ]; then
+    openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+      -keyout .local/certs/localhost.key \
+      -out .local/certs/localhost.crt \
+      -subj "/CN=localhost" \
+      -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+  fi
+}
 
-# 6. Optional: Install & configure nginx (system-level, not in Docker)
-if [ "$HTTPS" = true ]; then
-  echo "🛡️ Configuring HTTPS (requires certbot + domain)"
-  # curl -fsSL https://get.acme.sh | sh
-  # acme.sh --issue -d $DOMAIN --nginx
-  # ... setup certbot ...
-fi
+validate_prod_tls() {
+  cert_file="$(grep '^TLS_CERT_FILE=' "$ENV_FILE" | cut -d= -f2-)"
+  key_file="$(grep '^TLS_KEY_FILE=' "$ENV_FILE" | cut -d= -f2-)"
+  if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ]; then
+    echo "Error: production TLS files do not exist: $cert_file $key_file"
+    exit 1
+  fi
+}
 
-echo "✅ AI Stack deployed!"
-echo "🌐 Access at:"
-echo "  - Directus: http://$VPS_HOST/"
-echo "  - Wiki.js: http://$VPS_HOST/wiki/"
-echo "  - API: http://$VPS_HOST/api/"
-echo "  - Next.js: http://$VPS_HOST/next/"
+require_command docker
+load_env
+mkdir -p data/raw
+
+case "$TARGET" in
+  local)
+    require_command openssl
+    ensure_local_certs
+    ;;
+  production)
+    validate_prod_tls
+    ;;
+  *)
+    echo "Usage: ENV_FILE=.env.dev ./scripts/deploy.sh local"
+    echo "       ENV_FILE=.env ./scripts/deploy.sh production"
+    exit 1
+    ;;
+esac
+
+echo "Deploying $TARGET with $ENV_FILE."
+compose config >/dev/null
+compose pull --ignore-pull-failures
+compose up -d --build --remove-orphans
+compose ps

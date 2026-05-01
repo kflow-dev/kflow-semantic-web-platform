@@ -219,109 +219,6 @@ Run tests with:
 ./tests/deployment-test.sh
 ```
 
-## Production Deployment on Ubuntu 22.04 VPS
-
-### Prerequisites
-- Ubuntu 22.04 LTS server
-- Docker and Docker Compose installed
-- A domain name pointing to your server
-- SSL certificate (recommended but optional for testing)
-
-### Deployment Steps
-
-1. SSH into your Ubuntu server
-2. Install Docker and Docker Compose:
-   ```bash
-   sudo apt update
-   sudo apt install docker.io docker-compose
-   ```
-
-3. Clone the repository:
-   ```bash
-   git clone https://github.com/kflow-dev/kflow-semantic-web-platform.git
-   cd kflow-semantic-web-platform
-   ```
-
-4. Configure environment variables:
-   ```bash
-   cp .env.example .env
-   # Edit .env to set your domain and passwords
-   ```
-
-5. Start services:
-   ```bash
-   docker-compose up -d
-   ```
-
-6. Configure firewall:
-   ```bash
-   sudo ufw allow 22
-   sudo ufw allow 80
-   sudo ufw allow 443
-   sudo ufw enable
-   ```
-
-7. Configure reverse proxy (Nginx) for HTTPS:
-   ```bash
-   sudo apt install nginx
-   # Configure Nginx with SSL certificate
-   ```
-
-### File Structure for Production
-
-```
-/kflow-semantic-web-platform/
-├── docker-compose.yml
-├── .env
-├── .env.example
-├── data/
-│   └── postgres/
-├── services/
-│   ├── llamaindex/
-│   │   ├── Dockerfile
-│   │   ├── app.py
-│   │   └── requirements.txt
-│   └── qr/
-│       ├── Dockerfile
-│       └── app.py
-├── config/
-│   ├── directus.json
-│   ├── postgres.yml
-│   ├── keycloak.json
-│   ├── jena.ttl
-│   └── qdrant.yaml
-├── tests/
-│   ├── health-checks.sh
-│   ├── product-endpoint-tests.sh
-│   ├── end-to-end-test.sh
-│   └── deployment-test.sh
-└── README.md
-```
-
-### Testing Production Deployment
-
-1. Verify all containers are running:
-   ```bash
-   docker-compose ps
-   ```
-
-2. Test service endpoints:
-   ```bash
-   curl http://localhost:8055
-   curl http://localhost:7000
-   curl http://localhost:5000
-   ```
-
-3. Verify database connectivity:
-   ```bash
-   docker-compose exec postgres psql -U directus -d directus
-   ```
-
-4. Test user authentication:
-   ```bash
-   curl http://localhost:8080
-   ```
-
 ## End-to-End Scenario Testing
 
 ### Typical User Flow:
@@ -375,6 +272,111 @@ docker-compose ps
 ## Contributing
 
 This project is a work in progress. Contributions are welcome through pull requests.
+
+## Production Deployment on Ubuntu 22.04
+
+The production profile is designed for an unmanaged VPS with about 5 GB RAM. The default Compose stack keeps Keycloak and Ollama optional, exposes only Nginx, and validates its memory budget with `./tests/resource-budget-test.sh`.
+
+### Server prerequisites
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl git openssl
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"
+```
+
+Log out and back in, then clone the repository:
+
+```bash
+sudo mkdir -p /opt/kflow-semantic-web-platform
+sudo chown "$USER:$USER" /opt/kflow-semantic-web-platform
+git clone <repo-url> /opt/kflow-semantic-web-platform
+cd /opt/kflow-semantic-web-platform
+cp .env.template .env
+```
+
+Edit `.env` and set `DOMAIN`, `PUBLIC_URL`, all passwords, and TLS file paths. For a standalone deployment where Docker Nginx owns ports 80 and 443:
+
+```bash
+ENV_FILE=.env ./scripts/deploy.sh production
+BASE_URL=https://your-domain.example ENV_FILE=.env ./tests/end-to-end-test.sh
+```
+
+### Integrating with an existing host Nginx
+
+If the VPS already has Nginx listening on HTTP `80` and HTTPS `443`, do not publish Docker Nginx on those ports. In `.env`, bind the container front end to loopback-only alternate ports:
+
+```env
+NGINX_HTTP_PORT=127.0.0.1:8088
+NGINX_HTTPS_PORT=127.0.0.1:8443
+PUBLIC_URL=https://your-domain.example
+```
+
+Then configure the host Nginx as the public TLS terminator and verified reverse proxy. Use the same certificate paths in `.env` so Docker Nginx presents a certificate trusted by the host proxy.
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.example;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.example;
+
+    ssl_certificate /etc/letsencrypt/live/your-domain.example/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.example/privkey.pem;
+
+    location / {
+        proxy_pass https://127.0.0.1:8443;
+        proxy_ssl_server_name on;
+        proxy_ssl_name your-domain.example;
+        proxy_ssl_trusted_certificate /etc/letsencrypt/live/your-domain.example/fullchain.pem;
+        proxy_ssl_verify on;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+Reload host Nginx and deploy:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+ENV_FILE=.env ./scripts/deploy.sh production
+```
+
+Public routes are `/` for Directus, `/rag/` for RAG APIs, `/qr/`, `/jena/`, `/qdrant/`, `/prometheus/`, and `/grafana/`. Start optional services only when there is enough RAM:
+
+```bash
+docker compose --env-file .env --profile auth up -d keycloak
+docker compose --env-file .env --profile llm up -d ollama
+```
+
+## Graph RAG Pipeline Workflow
+
+Use the Web UI to create product/content collections in Directus, upload CMS files or media, and place batch files in `data/raw/`. Index content from the CLI:
+
+```bash
+curl -k -X POST https://your-domain.example/rag/index/raw
+curl -k -X POST https://your-domain.example/rag/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"name":"sku-123","content":"Product facts, links, and semantic metadata."}'
+curl -k "https://your-domain.example/rag/query?q=sku-123"
+curl -k -X POST https://your-domain.example/rag/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Summarize sku-123","top_k":5}'
+```
+
+For Python workflow examples using LangChain, LlamaIndex, LangGraph, Qdrant, and Ollama-style chat, open [notebooks/graph_rag_pipeline.ipynb](notebooks/graph_rag_pipeline.ipynb). Recommended notebook packages:
+
+```bash
+pip install -U jupyter requests qdrant-client langchain langchain-ollama langchain-qdrant langgraph llama-index llama-index-llms-ollama llama-index-embeddings-ollama
+```
 
 ## License
 

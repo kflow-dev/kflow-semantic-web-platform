@@ -1,45 +1,29 @@
 #!/bin/bash
+set -euo pipefail
 
-echo "Running end-to-end workflow test..."
+ENV_FILE="${ENV_FILE:-.env.dev}"
+BASE_URL="${BASE_URL:-https://localhost}"
 
-# Test 1: Check all services are running
-echo "Step 1: Checking all services are running..."
-docker-compose ps | grep -E "(Up|Exited)" || echo "Some services may not be running properly"
+compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose --env-file "$ENV_FILE" "$@"
+  else
+    docker-compose --env-file "$ENV_FILE" "$@"
+  fi
+}
 
-# Test 2: Health check for all services
-echo -e "\nStep 2: Running health checks..."
-./tests/health-checks.sh
+echo "Running end-to-end scenario through $BASE_URL."
 
-# Test 3: Test QR code generation and tracking
-echo -e "\nStep 3: Testing QR code functionality..."
-echo "Generating QR code..."
-QR_RESPONSE=$(curl -s -X POST http://localhost:7000/generate -d '{"entity_id": "product-123"}')
-echo "QR Response: $QR_RESPONSE"
+echo "1. Verifying containers are running."
+compose ps
 
-# Extract token from response (simplified)
-TOKEN=$(echo $QR_RESPONSE | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
-if [ ! -z "$TOKEN" ]; then
-    echo "Tracking QR code with token: $TOKEN"
-    curl -s http://localhost:7000/track/$TOKEN
-else
-    echo "Could not extract token from QR response"
-fi
+echo "2. Checking public Nginx-routed endpoints."
+BASE_URL="$BASE_URL" ./tests/health-checks.sh
 
-# Test 4: Test basic Directus functionality
-echo -e "\nStep 4: Testing basic Directus functionality..."
-echo "Checking if Directus is accessible..."
-curl -f -s http://localhost:8055 || echo "Directus is not accessible"
+echo "3. Running product RAG and QR workflow."
+BASE_URL="$BASE_URL" ./tests/product-endpoint-tests.sh
 
-# Test 5: Test database connectivity
-echo -e "\nStep 5: Testing database connectivity..."
-echo "Checking PostgreSQL..."
-docker-compose exec postgres pg_isready -U directus -d directus || echo "PostgreSQL not responding"
+echo "4. Verifying PostgreSQL from inside the backend network."
+compose exec -T postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 
-# Test 6: Test RAG API
-echo -e "\nStep 6: Testing RAG API..."
-echo "Testing basic query..."
-curl -s http://localhost:5000/query?q=test || echo "RAG API not responding properly"
-
-echo -e "\nEnd-to-end test completed!"
-echo "If all services are running, you should see a successful workflow."
-echo "The system is ready for product management, user authentication, and QR tracking."
+echo "End-to-end scenario completed successfully."

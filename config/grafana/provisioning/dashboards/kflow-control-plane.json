@@ -1,0 +1,33 @@
+{
+  "uid": "kflow-control-plane",
+  "title": "KFlow Control Plane",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "RAG Documents",
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4},
+      "targets": [{"expr": "rag_documents_total", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "RAG Chunks",
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4},
+      "targets": [{"expr": "rag_chunks_total", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "RAG Queries",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "rate(rag_queries_total[5m])", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Qdrant Requests",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "rate(app_info[5m])", "refId": "A"}]
+    }
+  ]
+}

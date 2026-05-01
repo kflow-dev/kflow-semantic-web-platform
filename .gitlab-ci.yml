@@ -1,0 +1,82 @@
+stages:
+  - pre-commit
+  - build
+  - test
+  - deploy
+
+variables:
+  DOCKER_HOST: "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""
+  ENV_FILE: ".env.dev"
+  BASE_URL: "https://docker"
+
+pre_commit:
+  stage: pre-commit
+  image: docker:25
+  services:
+    - docker:25-dind
+  before_script:
+    - apk add --no-cache bash docker-cli-compose python3 py3-pip
+    - pip install --break-system-packages pre-commit
+  script:
+    - pre-commit run --all-files
+    - ./tests/resource-budget-test.sh
+
+compose_build:
+  stage: build
+  image: docker:25
+  services:
+    - docker:25-dind
+  before_script:
+    - apk add --no-cache bash openssl curl docker-cli-compose
+  script:
+    - ./tests/deployment-test.sh
+
+e2e:
+  stage: test
+  image: docker:25
+  services:
+    - docker:25-dind
+  before_script:
+    - apk add --no-cache bash openssl curl docker-cli-compose
+  script:
+    - ./scripts/setup-local.sh
+    - ./tests/end-to-end-test.sh
+  after_script:
+    - docker compose --env-file .env.dev down --remove-orphans || true
+
+deploy_local_macos:
+  stage: deploy
+  tags:
+    - macos
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  script:
+    - ENV_FILE=.env.dev ./scripts/deploy.sh local
+    - BASE_URL=https://localhost ENV_FILE=.env.dev ./tests/end-to-end-test.sh
+
+deploy_production_ubuntu:
+  stage: deploy
+  image: alpine:3.20
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  before_script:
+    - apk add --no-cache openssh-client bash
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H "$PROD_SSH_HOST" >> ~/.ssh/known_hosts
+  script:
+    - |
+      ssh "$PROD_SSH_USER@$PROD_SSH_HOST" "
+        set -e
+        cd ${PROD_DEPLOY_PATH:-/opt/kflow-semantic-web-platform}
+        git fetch --all
+        git checkout ${CI_COMMIT_SHA}
+        printf '%s' '${PROD_ENV_FILE_B64}' | base64 -d > .env
+        ENV_FILE=.env ./scripts/deploy.sh production
+        BASE_URL=${PROD_BASE_URL} ENV_FILE=.env ./tests/end-to-end-test.sh
+      "

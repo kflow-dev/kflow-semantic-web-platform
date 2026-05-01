@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: nginx
+    metrics_path: /health
+    static_configs:
+      - targets: ["nginx:80"]
+
+  - job_name: rag-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["llamaindex:5000"]
+
+  - job_name: fastapi
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fastapi:8000"]
+
+  - job_name: qdrant
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["qdrant:6333"]

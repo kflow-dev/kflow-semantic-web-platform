@@ -1,24 +1,36 @@
 #!/bin/bash
+set -euo pipefail
 
-echo "Testing product management endpoints..."
+BASE_URL="${BASE_URL:-https://localhost}"
+CURL_OPTS=(-fskL --connect-timeout 5 --max-time 30)
 
-# Test Directus API for products
-echo "1. Testing Directus products API..."
-curl -X GET http://localhost:8055/items/products \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwicm9sZSI6ImFkbWluIiwiaWF0IjoxNjE3Mzg0MDAwfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c" \
-  -H "Content-Type: application/json" || echo "Directus products API not responding"
+echo "Testing product pipeline endpoints through Nginx."
 
-# Test QR API endpoints
-echo -e "\n2. Testing QR API - generating QR code..."
-curl -X POST http://localhost:7000/generate \
+echo "1. Checking Directus API health."
+curl "${CURL_OPTS[@]}" "$BASE_URL/server/health" >/dev/null
+
+echo "2. Ingesting a sample product document into the RAG API."
+curl "${CURL_OPTS[@]}" -X POST "$BASE_URL/rag/ingest" \
   -H "Content-Type: application/json" \
-  -d '{"entity_id": "test-product-123"}' || echo "QR API generate endpoint not responding"
+  -d '{"name":"product-123","content":"Product 123 is a semantic web demo product with QR tracking and RAG metadata."}' >/dev/null
 
-echo -e "\n3. Testing QR API - tracking QR code..."
-curl -X GET http://localhost:7000/track/test-token-123 || echo "QR API track endpoint not responding"
+echo "3. Indexing raw file content for the RAG API."
+curl "${CURL_OPTS[@]}" -X POST "$BASE_URL/rag/index/raw" >/dev/null
 
-# Test RAG API endpoint
-echo -e "\n4. Testing RAG API..."
-curl -X GET http://localhost:5000/query?q=hello || echo "RAG API not responding"
+echo "4. Querying the RAG API for the sample product."
+curl "${CURL_OPTS[@]}" "$BASE_URL/rag/query?q=product%20123" >/dev/null
 
-echo -e "\nProduct endpoint tests completed!"
+echo "5. Checking chat interaction against retrieved context."
+curl "${CURL_OPTS[@]}" -X POST "$BASE_URL/rag/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What is product 123?","top_k":3}' >/dev/null
+
+echo "6. Generating and tracking a QR code for the sample product."
+QR_RESPONSE="$(curl "${CURL_OPTS[@]}" -X POST "$BASE_URL/qr/generate" \
+  -H "Content-Type: application/json" \
+  -d '{"entity_id":"product-123"}')"
+TOKEN="$(printf '%s' "$QR_RESPONSE" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+test -n "$TOKEN"
+curl "${CURL_OPTS[@]}" "$BASE_URL/qr/track/$TOKEN" >/dev/null
+
+echo "Product pipeline endpoint tests completed successfully."

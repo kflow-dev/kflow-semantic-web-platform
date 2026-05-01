@@ -1,72 +1,237 @@
 services:
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-postgres
+    restart: unless-stopped
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-700m}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    command: >
+      postgres
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS_MB:-256}MB
+      -c work_mem=${POSTGRES_WORK_MEM_MB:-8}MB
+      -c maintenance_work_mem=${POSTGRES_MAINT_WORK_MEM_MB:-64}MB
+      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_MB:-512}MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-redis
+    restart: unless-stopped
+    mem_limit: ${REDIS_MEMORY_LIMIT:-128m}
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - backend
+
+  directus:
+    image: directus/directus:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-directus
+    restart: unless-stopped
+    mem_limit: ${DIRECTUS_MEMORY_LIMIT:-700m}
     environment:
       KEY: ${DIRECTUS_KEY}
       SECRET: ${DIRECTUS_SECRET}
-      DB_CLIENT: "pg"
-      DB_HOST: "postgres"
+      PUBLIC_URL: ${PUBLIC_URL}
+      DB_CLIENT: pg
+      DB_HOST: postgres
       DB_PORT: 5432
-      DB_DATABASE: aidb
-      DB_USER: appuser
+      DB_DATABASE: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
-      ADMIN_EMAIL: "admin@knowledge-flows.com"
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL}
       ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASS}
       WEBSOCKETS_ENABLED: "true"
-    deploy:
-      resources:
-        limits:
-          memory: ${DIRECTUS_MEMORY_LIMIT_MB:-512}M
+      CACHE_ENABLED: "true"
+      CACHE_STORE: redis
+      REDIS: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - backend
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-keycloak
+    restart: unless-stopped
+    profiles: ["auth"]
+    mem_limit: ${KEYCLOAK_MEMORY_LIMIT:-900m}
+    command: ["start-dev", "--http-relative-path=/auth", "--proxy=edge"]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    networks:
+      - backend
+
+  jena:
+    image: stain/jena-fuseki
+    platform: linux/amd64
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-jena
+    restart: unless-stopped
+    mem_limit: ${JENA_MEMORY_LIMIT:-700m}
+    command: ["./fuseki-server", "--mem", "/ds"]
+    environment:
+      ADMIN_PASSWORD: ${JENA_ADMIN_PASSWORD}
+    volumes:
+      - jena-data:/fuseki
+    networks:
+      - backend
+
+  qdrant:
+    image: qdrant/qdrant:v1.8.2
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-qdrant
+    restart: unless-stopped
+    mem_limit: ${QDRANT_MEMORY_LIMIT:-700m}
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - backend
+
+  fastapi:
+    build: ./fastapi
+    image: ${COMPOSE_PROJECT_NAME:-kflow}/fastapi:${IMAGE_TAG:-dev}
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-fastapi
+    restart: unless-stopped
+    mem_limit: ${FASTAPI_MEMORY_LIMIT:-256m}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - backend
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8055/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  llama:
-    image: ollama/ollama:latest
-    container_name: ${COMPOSE_PROJECT_NAME}-llama
-    ports:
-      - "127.0.0.1:${LLAMA_PORT:-5000}:11434"
+  llamaindex:
+    build: ./services/llamaindex
+    image: ${COMPOSE_PROJECT_NAME:-kflow}/llamaindex:${IMAGE_TAG:-dev}
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-llamaindex
+    restart: unless-stopped
+    mem_limit: ${RAG_MEMORY_LIMIT:-512m}
+    environment:
+      RAG_DATA_DIR: /app/data/indexed
+      RAG_RAW_DIR: /app/data/raw
+      RAG_COLLECTION: ${RAG_COLLECTION:-kflow_documents}
+      RAG_VECTOR_SIZE: ${RAG_VECTOR_SIZE:-384}
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-phi3:mini}
     volumes:
-      - type: bind
-        source: ${DATA_DIR}/ollama
-        target: /root/.ollama
-    deploy:
-      resources:
-        limits:
-          memory: 2G
+      - rag-data:/app/data/indexed
+      - ./data/raw:/app/data/raw:ro
+    depends_on:
+      - qdrant
     networks:
       - backend
 
   qr:
-    image: uphold/qrcode-reader:latest
-    container_name: ${COMPOSE_PROJECT_NAME}-qr
-    ports:
-      - "127.0.0.1:${QR_PORT:-7000}:80"
-    deploy:
-      resources:
-        limits:
-          memory: 256M
+    build: ./services/qr
+    image: ${COMPOSE_PROJECT_NAME:-kflow}/qr:${IMAGE_TAG:-dev}
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-qr
+    restart: unless-stopped
+    mem_limit: ${QR_MEMORY_LIMIT:-128m}
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL}
     networks:
       - backend
 
   nginx:
-    image: nginx:alpine
-    container_name: ${COMPOSE_PROJECT_NAME}-nginx
+    image: nginx:1.25-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-nginx
+    restart: unless-stopped
+    mem_limit: ${NGINX_MEMORY_LIMIT:-128m}
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    environment:
+      DOMAIN: ${DOMAIN}
     volumes:
-      - ./nginx/ai-stack.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/semantic-platform.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${TLS_CERT_FILE}:/etc/nginx/certs/tls.crt:ro
+      - ${TLS_KEY_FILE}:/etc/nginx/certs/tls.key:ro
     depends_on:
       - directus
-      - llama
+      - jena
+      - qdrant
+      - fastapi
+      - llamaindex
       - qr
+      - prometheus
+      - grafana
     networks:
       - backend
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-prometheus
+    restart: unless-stopped
+    mem_limit: ${PROMETHEUS_MEMORY_LIMIT:-256m}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
+      - --web.external-url=${PUBLIC_URL}/prometheus/
+      - --web.route-prefix=/prometheus
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - backend
+
+  grafana:
+    image: grafana/grafana-oss:10.4.3
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-grafana
+    restart: unless-stopped
+    mem_limit: ${GRAFANA_MEMORY_LIMIT:-384m}
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: ${PUBLIC_URL}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - backend
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-kflow}-ollama
+    restart: unless-stopped
+    profiles: ["llm"]
+    mem_limit: ${OLLAMA_MEMORY_LIMIT:-1800m}
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - backend
+
+volumes:
+  postgres-data:
+  redis-data:
+  jena-data:
+  qdrant-data:
+  rag-data:
+  prometheus-data:
+  grafana-data:
+  ollama-data:
 
 networks:
   backend:
